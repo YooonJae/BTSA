@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# System / editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Other optional ignores
+*.log
+
+
+
