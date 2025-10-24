@@ -8,28 +8,29 @@ from strategies.stg_BB_1 import BB_1
 from strategies.stg_BB_MA_1 import BB_MA_1
 from strategies.stg_GPT_1 import GPT_1
 from strategies.SAVE.stg_ZRM_1 import ZRM_1
+from strategies.stg_TEST_1 import TEST_1
 
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 # === Configuration ===
-STRATEGY = MA_3
-SYMBOL_INDEX = 1
-TIMEFRAME = "m"    # 'm' = minute, 'h' = hour
+STRATEGY = TEST_1
+SYMBOL_INDEX = 3
+TIMEFRAME = "m"
 cash = 1_000_000
-commission = 0.00
+commission = 0.001
 MONTHS_AGO = 1
 
 symbols = ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"]
-symbols = ["AAPL", "AMD", "GOOG", "NVDA", "TSLA", "MSFT", "PYPL"]
+# symbols = ["AAPL", "AMD", "GOOG", "NVDA", "TSLA", "MSFT", "PYPL"]
 
 symbol = symbols[SYMBOL_INDEX - 1] if 1 <= SYMBOL_INDEX <= len(symbols) else symbols[0]
 print(f"✅ Selected symbol: {symbol} ({'Hourly' if TIMEFRAME=='h' else 'Minute'} candles)")
 
 # === Load Data ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-data_path = os.path.join(BASE_DIR, "Data","TransData","L_cap", f"{symbol}.csv")
+data_path = os.path.join(BASE_DIR, "Data","TransData","S_cap", f"{symbol}.csv")
 df = pd.read_csv(data_path)
 df['Date'] = pd.to_datetime(df['Datetime'])
 df.set_index('Date', inplace=True)
@@ -57,7 +58,7 @@ bt = Backtest(
     df,
     STRATEGY,
     cash=1_000_000,
-    commission=0.0,              # or your broker-equivalent
+    commission=0.00,              # or your broker-equivalent
     trade_on_close=True,         # enter/exit at signal bar's close
     exclusive_orders=True,       # don't overlap orders
     hedging=False                # long-only or short-only behavior

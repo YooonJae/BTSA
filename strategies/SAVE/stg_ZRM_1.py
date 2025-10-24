@@ -1,40 +1,44 @@
 from backtesting import Strategy
-from backtesting.lib import crossover
 import pandas as pd
 import numpy as np
 
 class ZRM_1(Strategy):
     """
-    Strategy using Z-score vs rolling mean to detect high/low regimes.
-    When price is significantly above the rolling mean -> go short
-    When price is significantly below the rolling mean -> go long
+    Long-only regime strategy using Z-score vs rolling mean.
+    - Enter LONG when price is far BELOW its rolling mean (z <= -z_entry)
+    - Exit LONG when deviation mean-reverts toward zero (z > -z_exit)
     """
-    # user-tunable parameters
-    window = 50        # rolling window length
-    z_entry = 1.5      # threshold for entry
-    z_exit = 0.3       # threshold for exit
+    window = 100       # rolling window length
+    z_entry = 2.5      # threshold for long entry (below mean)
+    z_exit = 0.3       # threshold for exit (near zero)
 
     def init(self):
-        # compute rolling mean and std
         price = self.data.Close
+
+        # Rolling mean & std via self.I (vectorized functions expected)
         self.mean = self.I(lambda x: pd.Series(x).rolling(self.window).mean(), price)
-        self.std = self.I(lambda x: pd.Series(x).rolling(self.window).std(), price)
-        # compute z-score
-        self.z = self.I(lambda x, m, s: (x - m) / s, price, self.mean, self.std)
+        self.std  = self.I(lambda x: pd.Series(x).rolling(self.window).std(),  price)
+
+        # Guard against division by zero (std == 0)
+        def zscore(x, m, s):
+            s_safe = np.where((s == 0) | np.isnan(s), np.nan, s)
+            return (x - m) / s_safe
+
+        self.z = self.I(zscore, price, self.mean, self.std)
 
     def next(self):
         z_now = self.z[-1]
-        price = self.data.Close[-1]
 
-        # entry signals
+        # If we don't have enough data yet, skip
+        if np.isnan(z_now):
+            return
+
+        # ENTRY: long only
         if not self.position:
             if z_now <= -self.z_entry:
                 self.buy()
-            elif z_now >= self.z_entry:
-                self.sell()
 
-        # exit signals (when normalized deviation returns near zero)
-        elif self.position.is_long and z_now > -self.z_exit:
-            self.position.close()
-        elif self.position.is_short and z_now < self.z_exit:
-            self.position.close()
+        # EXIT: close long when z reverts toward zero
+        else:
+            if self.position.is_long and z_now > -self.z_exit:
+                self.position.close()

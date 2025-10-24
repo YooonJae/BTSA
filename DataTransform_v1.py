@@ -14,59 +14,66 @@ def count_trading_days_nyse(start_str: str, end_str: str) -> int:
     return len(schedule), schedule.index  # 두 번째 값은 실제 거래일 리스트
 
 
-def load_and_clean_data(path: str) -> pd.DataFrame:
+def load_and_clean_data(path: str, input_tz: str = "UTC") -> pd.DataFrame:
     """
-    CSV에 'timestamp' (UTC 기준)와 OHLCV가 있다고 가정.
-    - UTC -> America/New_York 변환
-    - 정규장 09:30~15:59만 필터
+    CSV must contain 'timestamp' and OHLCV.
+    - Converts from input_tz to America/New_York
+    - Keeps only 09:30–15:59 (regular session)
     """
     df = pd.read_csv(path, parse_dates=["timestamp"])
-    # CSV의 timestamp가 UTC라고 가정
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("America/New_York")
+
+    if input_tz.upper() == "UTC":
+        # timestamps are UTC; convert to NY
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("America/New_York")
+    else:
+        # timestamps are in some local tz (e.g., 'America/New_York')
+        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(input_tz).dt.tz_convert("America/New_York")
+
     df.set_index("timestamp", inplace=True)
-    df = df.between_time("09:30", "15:59")  # 정규장 필터링
+    df = df.between_time("09:30", "15:59")
     return df
 
 
 def fill_missing_minutes(df: pd.DataFrame, trading_days) -> pd.DataFrame:
     """
-    NYSE 거래일 리스트(trading_days)를 기준으로 각 날짜에 대해
-    09:30~15:59의 분봉을 모두 생성(reindex)하고,
-    누락값을 적절히 채운다.
-
-    완전히 비어 있는 날은 전일 종가로 close를 시드하고 (volume=0),
-    open/high/low도 close로 채운다.
+    trading_days: iterable of date-like (e.g., numpy.datetime64[D] or datetime.date)
     """
     result = []
-    prior_close = None  # 완전 누락일 시 시드로 사용
+    prior_close = None  # used when a whole day is missing
+
+    tz = "America/New_York"
 
     for day in trading_days:
-        day_ts = pd.Timestamp(day)  # 날짜만 포함
-        # 로컬(뉴욕) 시간에서 09:30 ~ 15:59의 1분 간격 인덱스 생성
-        full_range = pd.date_range(
-            start=day_ts.tz_localize("America/New_York") + pd.Timedelta(hours=9, minutes=30),
-            end=day_ts.tz_localize("America/New_York") + pd.Timedelta(hours=15, minutes=59),
-            freq="T",
-        )
+        # day as a date
+        day_date = pd.Timestamp(day).date()
 
-        # 해당 날짜 데이터 슬라이싱 후 분 단위로 재색인
-        mask = df.index.normalize() == day_ts
-        day_data = df.loc[mask].reindex(full_range)
+        # Full intraday 1-minute range in local NY time
+        day_start = pd.Timestamp.combine(pd.Timestamp(day_date), pd.Timestamp("09:30").time()).tz_localize(tz)
+        day_end   = pd.Timestamp.combine(pd.Timestamp(day_date), pd.Timestamp("15:59").time()).tz_localize(tz)
+        full_range = pd.date_range(start=day_start, end=day_end, freq="1min")
 
-        # close 채우기: 완전 비어 있으면 prior_close로 시드
+        # Slice by date (avoids tz-aware vs tz-naive mismatch)
+        day_data = df.loc[df.index.date == day_date].reindex(full_range)
+
+        # If the whole day is empty, try to seed close from the last known close before 09:30
         if day_data["close"].isna().all():
-            if prior_close is not None:
-                day_data["close"] = day_data["close"].fillna(prior_close)
-        # 남은 결측치는 전일/당일 내에서 ffill
+            prev = df.loc[df.index < day_start, "close"].dropna()
+            if not prev.empty:
+                prior_close = prev.iloc[-1]
+
+        # Fill 'close': seed with prior_close if present, then forward fill within the day
+        if day_data["close"].isna().all() and prior_close is not None:
+            day_data["close"] = prior_close
+
         day_data["close"] = day_data["close"].ffill()
 
-        # 시가/고가/저가/거래량
-        day_data["open"] = day_data["open"].fillna(day_data["close"])
-        day_data["high"] = day_data["high"].fillna(day_data["close"])
-        day_data["low"] = day_data["low"].fillna(day_data["close"])
+        # Fill O/H/L/Volume
+        day_data["open"]   = day_data["open"].fillna(day_data["close"])
+        day_data["high"]   = day_data["high"].fillna(day_data["close"])
+        day_data["low"]    = day_data["low"].fillna(day_data["close"])
         day_data["volume"] = day_data["volume"].fillna(0)
 
-        # 다음 날을 위한 prior_close 업데이트
+        # Update prior_close for the next day
         if not day_data["close"].isna().all():
             prior_close = day_data["close"].iloc[-1]
 
