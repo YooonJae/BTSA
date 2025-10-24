@@ -1,10 +1,9 @@
-import pandas as pd
 import os
+from datetime import datetime
+import pandas as pd
 import pandas_market_calendars as mcal
 
-from pandas.tseries.holiday import USFederalHolidayCalendar
-from datetime import datetime
-
+from pandas.tseries.holiday import USFederalHolidayCalendar  # (unused, but kept if you need it)
 
 MINUTES_PER_DAY = 390  # 정규장 1일당 분봉 수
 
@@ -15,34 +14,61 @@ def count_trading_days_nyse(start_str: str, end_str: str) -> int:
     return len(schedule), schedule.index  # 두 번째 값은 실제 거래일 리스트
 
 
-
 def load_and_clean_data(path: str) -> pd.DataFrame:
+    """
+    CSV에 'timestamp' (UTC 기준)와 OHLCV가 있다고 가정.
+    - UTC -> America/New_York 변환
+    - 정규장 09:30~15:59만 필터
+    """
     df = pd.read_csv(path, parse_dates=["timestamp"])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True).dt.tz_convert("America/New_York")
+    # CSV의 timestamp가 UTC라고 가정
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert("America/New_York")
     df.set_index("timestamp", inplace=True)
     df = df.between_time("09:30", "15:59")  # 정규장 필터링
     return df
 
 
-def fill_missing_minutes(df: pd.DataFrame) -> pd.DataFrame:
-    result = []
+def fill_missing_minutes(df: pd.DataFrame, trading_days) -> pd.DataFrame:
+    """
+    NYSE 거래일 리스트(trading_days)를 기준으로 각 날짜에 대해
+    09:30~15:59의 분봉을 모두 생성(reindex)하고,
+    누락값을 적절히 채운다.
 
-    for day in df.index.normalize().unique():
+    완전히 비어 있는 날은 전일 종가로 close를 시드하고 (volume=0),
+    open/high/low도 close로 채운다.
+    """
+    result = []
+    prior_close = None  # 완전 누락일 시 시드로 사용
+
+    for day in trading_days:
+        day_ts = pd.Timestamp(day)  # 날짜만 포함
+        # 로컬(뉴욕) 시간에서 09:30 ~ 15:59의 1분 간격 인덱스 생성
         full_range = pd.date_range(
-            start=day + pd.Timedelta(hours=9, minutes=30),
-            end=day + pd.Timedelta(hours=15, minutes=59),
-            freq='T',
-            tz='America/New_York'
+            start=day_ts.tz_localize("America/New_York") + pd.Timedelta(hours=9, minutes=30),
+            end=day_ts.tz_localize("America/New_York") + pd.Timedelta(hours=15, minutes=59),
+            freq="T",
         )
 
-        day_data = df[df.index.normalize() == day]
-        day_data = day_data.reindex(full_range)
+        # 해당 날짜 데이터 슬라이싱 후 분 단위로 재색인
+        mask = df.index.normalize() == day_ts
+        day_data = df.loc[mask].reindex(full_range)
 
-        day_data["close"] = day_data["close"].fillna(method="ffill")
+        # close 채우기: 완전 비어 있으면 prior_close로 시드
+        if day_data["close"].isna().all():
+            if prior_close is not None:
+                day_data["close"] = day_data["close"].fillna(prior_close)
+        # 남은 결측치는 전일/당일 내에서 ffill
+        day_data["close"] = day_data["close"].ffill()
+
+        # 시가/고가/저가/거래량
         day_data["open"] = day_data["open"].fillna(day_data["close"])
         day_data["high"] = day_data["high"].fillna(day_data["close"])
         day_data["low"] = day_data["low"].fillna(day_data["close"])
         day_data["volume"] = day_data["volume"].fillna(0)
+
+        # 다음 날을 위한 prior_close 업데이트
+        if not day_data["close"].isna().all():
+            prior_close = day_data["close"].iloc[-1]
 
         result.append(day_data)
 
@@ -50,18 +76,26 @@ def fill_missing_minutes(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def finalize_for_backtesting(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    backtesting.py 호환 포맷으로 컬럼/타임존 정리
+    """
+    df = df.copy()
     df.reset_index(inplace=True)
     df.rename(columns={"index": "timestamp"}, inplace=True)
+    # naive 로컬타임(타임존 제거)
     df["timestamp"] = df["timestamp"].dt.tz_localize(None)
 
-    df.rename(columns={
-        "timestamp": "Datetime",
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume"
-    }, inplace=True)
+    df.rename(
+        columns={
+            "timestamp": "Datetime",
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        },
+        inplace=True,
+    )
 
     df = df[["Datetime", "Open", "High", "Low", "Close", "Volume"]]
     return df
@@ -72,7 +106,7 @@ def main(
     input_folder: str,
     output_folder: str,
     start_date_str: str = None,
-    end_date_str: str = None
+    end_date_str: str = None,
 ):
     file_name = f"{ticker.upper()}.csv"
     input_path = os.path.join(input_folder, file_name)
@@ -87,21 +121,43 @@ def main(
     # 데이터 로딩 및 정리
     raw_df = load_and_clean_data(input_path)
 
-    # ✅ 자동 날짜 추출
+    # ✅ 자동 날짜 추출 (CSV 내 실제 존재 구간)
     inferred_start = raw_df.index.min().date().isoformat()
     inferred_end = raw_df.index.max().date().isoformat()
 
+    # 사용자가 명시한 기간이 있으면 그걸 우선
+    start_for_calendar = start_date_str or inferred_start
+    end_for_calendar = end_date_str or inferred_end
+
     print(f"⏱ 자동 감지된 날짜 범위: {inferred_start} ~ {inferred_end}")
 
-    filled_df = fill_missing_minutes(raw_df)
+    # ✅ 예상 거래일(캘린더) 생성
+    nyse = mcal.get_calendar("XNYS")
+    schedule = nyse.schedule(start_date=start_for_calendar, end_date=end_for_calendar)
+    trading_days = schedule.index.date  # date 객체 배열
+
+    # (선택) 원본 CSV에서 통째로 빠진 거래일 진단
+    expected_days_idx = pd.Index(pd.to_datetime(schedule.index).normalize().date)
+    present_days_idx = pd.Index(raw_df.index.normalize().date)
+    truly_missing = expected_days_idx.difference(present_days_idx)
+    if len(truly_missing) > 0:
+        print("⚠️ 원본 CSV에서 통째로 빠진 거래일:")
+        for d in truly_missing:
+            print(f"   - {d}")
+
+    # ✅ 분단위 누락 채우기(거래일 기준)
+    filled_df = fill_missing_minutes(raw_df, trading_days)
+
+    # ✅ backtesting.py 형식으로 최종 정리
     final_df = finalize_for_backtesting(filled_df)
 
+    # 저장
     os.makedirs(output_folder, exist_ok=True)
     final_df.to_csv(output_path, index=False)
     print(f"✅ 정리된 데이터 저장 완료: {output_path}")
 
-    # ✅ NYSE 기준 거래일 수 계산
-    expected_days, valid_trading_days = count_trading_days_nyse(inferred_start, inferred_end)
+    # ✅ NYSE 기준 거래일 수 및 분봉 수 검증
+    expected_days, valid_trading_days = count_trading_days_nyse(start_for_calendar, end_for_calendar)
     expected_rows = expected_days * MINUTES_PER_DAY
     actual_rows = len(final_df)
 
@@ -111,9 +167,13 @@ def main(
     print(f" - 실제 분봉 수: {actual_rows}개")
     print(f" - ✅ 일치 여부: {'✅ 일치합니다!' if expected_rows == actual_rows else '❌ 불일치!'}")
 
-    # 누락된 거래일 확인
+    # 누락된 거래일(최종 결과 기준) 확인
     actual_days = pd.to_datetime(final_df["Datetime"]).dt.normalize().unique()
-    missing_days = [pd.Timestamp(day).date() for day in valid_trading_days if pd.Timestamp(day).normalize() not in actual_days]
+    missing_days = [
+        pd.Timestamp(day).date()
+        for day in valid_trading_days
+        if pd.Timestamp(day).normalize() not in actual_days
+    ]
 
     if missing_days:
         print(f"❌ 누락된 거래일 수: {len(missing_days)}일")
@@ -123,14 +183,10 @@ def main(
         print("✅ 모든 거래일 데이터가 존재합니다.")
 
 
-
-
-
-
 # ▶️ 실행 예시
 if __name__ == "__main__":
     main(
-        ticker="BBAI",
-        input_folder=r"C:\Users\AWK\Desktop\USSystemTrade\Data\RawData",
-        output_folder=r"C:\Users\AWK\Desktop\USSystemTrade\Data"
+        ticker="TSLA",
+        input_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "RawData", "L_cap"),
+        output_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "TransData", "L_cap"),
     )

@@ -14,19 +14,22 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 # === Configuration ===
+STRATEGY = MA_3
 SYMBOL_INDEX = 1
 TIMEFRAME = "m"    # 'm' = minute, 'h' = hour
 cash = 1_000_000
 commission = 0.00
-months_ago = 12
+MONTHS_AGO = 1
 
 symbols = ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"]
+symbols = ["AAPL", "AMD", "GOOG", "NVDA", "TSLA", "MSFT", "PYPL"]
+
 symbol = symbols[SYMBOL_INDEX - 1] if 1 <= SYMBOL_INDEX <= len(symbols) else symbols[0]
 print(f"✅ Selected symbol: {symbol} ({'Hourly' if TIMEFRAME=='h' else 'Minute'} candles)")
 
 # === Load Data ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-data_path = os.path.join(BASE_DIR, "Data", f"{symbol}.csv")
+data_path = os.path.join(BASE_DIR, "Data","TransData","L_cap", f"{symbol}.csv")
 df = pd.read_csv(data_path)
 df['Date'] = pd.to_datetime(df['Datetime'])
 df.set_index('Date', inplace=True)
@@ -45,14 +48,14 @@ if TIMEFRAME == "h":
 
 # === Filter by Date ===
 end_date = df.index.max().date()
-start_date = (end_date - relativedelta(months=months_ago))
+start_date = (end_date - relativedelta(months=MONTHS_AGO))
 df = df.loc[start_date:end_date]
 print(f"📊 Test Range: {start_date} ~ {end_date}")
 
 # === Run Backtest ===
 bt = Backtest(
     df,
-    ZRM_1,
+    STRATEGY,
     cash=1_000_000,
     commission=0.0,              # or your broker-equivalent
     trade_on_close=True,         # enter/exit at signal bar's close

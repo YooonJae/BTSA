@@ -10,7 +10,7 @@ API_KEY = "Y990EDZYLDzDApD8ze2fbLPDslIs0LCG"
 def main(ticker: str, start_date_str: str, end_date_str: str, save_folder: str):
     client = RESTClient(API_KEY)
 
-    # 날짜 변환
+    # DATE RANGE SETUP
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
 
@@ -55,7 +55,7 @@ def main(ticker: str, start_date_str: str, end_date_str: str, save_folder: str):
                 print(f"✅ 수신 완료: {len(monthly_data)}개 캔들")
                 all_data.extend(monthly_data)
                 success = True
-                time.sleep(15)
+                time.sleep(6)
 
             except Exception as e:
                 attempt += 1
@@ -67,7 +67,7 @@ def main(ticker: str, start_date_str: str, end_date_str: str, save_folder: str):
 
         current_date = (to_date + timedelta(days=1))
 
-    # DataFrame 생성 및 정규장 필터
+    # DataFrame GENERATOION
     df = pd.DataFrame(all_data)
     df['timestamp'] = df['timestamp'].dt.tz_convert('America/New_York')
     df = df[(df['timestamp'].dt.time >= pd.to_datetime("09:30").time()) &
@@ -75,18 +75,19 @@ def main(ticker: str, start_date_str: str, end_date_str: str, save_folder: str):
 
     df.sort_values("timestamp", inplace=True)
 
-    # 저장 경로 설정
+    # SAVE PATH
     os.makedirs(save_folder, exist_ok=True)
     save_path = os.path.join(save_folder, f"{ticker.upper()}.csv")
     df.to_csv(save_path, index=False)
 
     print(f"\n✅ 저장 완료: {save_path}")
 
-# 🧪 사용 예시
+
+
 if __name__ == "__main__":
     main(
-        ticker="TMC",
-        start_date_str="2024-01-01",
-        end_date_str="2025-07-31",
-        save_folder=r"C:\Users\AWK\Desktop\USSystemTrade\Data\RawData"
+        ticker="PYPL",
+        start_date_str="2025-01-01",
+        end_date_str="2025-09-30",
+        save_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "RawData", "L_cap")
     )
