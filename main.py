@@ -4,17 +4,21 @@ from backtesting import Backtest
 from strategies.stg_MA_1 import MA_1
 from strategies.stg_MA_2 import MA_2
 from strategies.stg_MA_3 import MA_3
-from strategies.stg_BB1 import BB1
+from strategies.stg_BB_1 import BB_1
 from strategies.stg_BB_MA_1 import BB_MA_1
+from strategies.stg_GPT_1 import GPT_1
+from strategies.SAVE.stg_ZRM_1 import ZRM_1
+
+
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 # === Configuration ===
-SYMBOL_INDEX = 4
+SYMBOL_INDEX = 1
 TIMEFRAME = "m"    # 'm' = minute, 'h' = hour
 cash = 1_000_000
 commission = 0.00
-months_ago = 1
+months_ago = 12
 
 symbols = ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"]
 symbol = symbols[SYMBOL_INDEX - 1] if 1 <= SYMBOL_INDEX <= len(symbols) else symbols[0]
@@ -48,7 +52,7 @@ print(f"📊 Test Range: {start_date} ~ {end_date}")
 # === Run Backtest ===
 bt = Backtest(
     df,
-    MA_1,
+    ZRM_1,
     cash=1_000_000,
     commission=0.0,              # or your broker-equivalent
     trade_on_close=True,         # enter/exit at signal bar's close

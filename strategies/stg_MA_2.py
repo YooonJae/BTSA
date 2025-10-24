@@ -1,72 +1,83 @@
-# strategies/stg_MA2.py
+# strategies/stg_EMA2.py
 import numpy as np
 import pandas as pd
 from backtesting import Strategy
 
 
-def _sma(series, n):
-    return pd.Series(series).rolling(n, min_periods=n).mean().values
+def _ema(series, n):
+    """Exponential Moving Average"""
+    return pd.Series(series).ewm(span=n, adjust=False, min_periods=n).mean().values
 
 
 class MA_2(Strategy):
     """
     1분봉 기준:
-      - 1일 MA: 390
-      - 단기 MA: n_short
-      - 30일 MA: n_long
+      - EMA 1: 30
+      - EMA 2: 60
+      - EMA 3: 90
     조건:
-      - 모든 MA의 기울기 > 0 → 진입 (BUY)
+      - 모든 EMA의 기울기 > 0 → 진입 (BUY)
       - 하나라도 기울기 <= 0 → 청산 (SELL)
+      - 오후 3시 59분 (15:59) → 보유 포지션 전부 청산
+      - 오전 9시 30분 이전에는 진입하지 않음
     """
-    n_day   = 195 # 390*1
-    n_short = 195 # 390*1
-    n_long  = 195 # 390*1
+    n_1 = 30
+    n_2 = 60
+    n_3 = 90
 
     def init(self):
         close = self.data.Close
-        self.ma_day   = self.I(_sma, close, self.n_day)
-        self.ma_short = self.I(_sma, close, self.n_short)
-        self.ma_long  = self.I(_sma, close, self.n_long)
+        self.ema_1 = self.I(_ema, close, self.n_1)
+        self.ema_2 = self.I(_ema, close, self.n_2)
+        self.ema_3 = self.I(_ema, close, self.n_3)
 
-        # ---- Compute slope conditions ----
-        slope_day   = np.r_[np.nan, (self.ma_day[1:]   > self.ma_day[:-1]).astype(int)]
-        slope_short = np.r_[np.nan, (self.ma_short[1:] > self.ma_short[:-1]).astype(int)]
-        slope_long  = np.r_[np.nan, (self.ma_long[1:]  > self.ma_long[:-1]).astype(int)]
+        slope_1 = np.r_[np.nan, (self.ema_1[1:] > self.ema_1[:-1]).astype(int)]
+        slope_2 = np.r_[np.nan, (self.ema_2[1:] > self.ema_2[:-1]).astype(int)]
+        slope_3 = np.r_[np.nan, (self.ema_3[1:] > self.ema_3[:-1]).astype(int)]
 
-        # ---- Combine all into one multi-column indicator subplot ----
         def conds():
             return pd.DataFrame({
-                'Day MA slope>0 (green)':   slope_day,
-                'Short MA slope>0 (blue)':  slope_short,
-                'Long MA slope>0 (red)':    slope_long
+                '1 EMA slope>0 (green)': slope_1,
+                '2 EMA slope>0 (blue)': slope_2,
+                '3 EMA slope>0 (red)': slope_3
             })
 
-        self.I(conds, name='MA_Slope_Conditions')
+        self.I(conds, name='EMA_Slope_Conditions')
 
     def next(self):
-        # Current & previous MAs
-        md, md_prev = self.ma_day[-1], self.ma_day[-2]
-        ms, ms_prev = self.ma_short[-1], self.ma_short[-2]
-        ml, ml_prev = self.ma_long[-1], self.ma_long[-2]
+        # Current & previous EMAs
+        e1, e1_prev = self.ema_1[-1], self.ema_1[-2]
+        e2, e2_prev = self.ema_2[-1], self.ema_2[-2]
+        e3, e3_prev = self.ema_3[-1], self.ema_3[-2]
         price = self.data.Close[-1]
 
-        if any(np.isnan(x) for x in (md, md_prev, ms, ms_prev, ml, ml_prev)):
+        if any(np.isnan(x) for x in (e1, e1_prev, e2, e2_prev, e3, e3_prev)):
             return
 
-        # ---- Slopes ----
-        cond_day_slope   = md > md_prev
-        cond_short_slope = ms > ms_prev
-        cond_long_slope  = ml > ml_prev
+        # ---- Time-based rules ----
+        current_time = self.data.index[-1]
 
-        # ---- Buy when all slopes positive ----
-        all_slopes_positive = cond_day_slope and cond_short_slope and cond_long_slope
-        any_slope_negative  = not all_slopes_positive
+        # Always close at 15:59
+        if isinstance(current_time, pd.Timestamp):
+            if current_time.hour == 15 and current_time.minute == 59:
+                if self.position:
+                    self.position.close()
+                return
 
+        # ---- Slope conditions ----
+        cond_e1_slope = e1 > e1_prev
+        cond_e2_slope = e2 > e2_prev
+        cond_e3_slope = e3 > e3_prev
+        all_slopes_positive = cond_e1_slope and cond_e2_slope and cond_e3_slope
+
+        # ---- Entry & exit logic ----
+        # ❌ Don't enter before 9:30
         if all_slopes_positive:
             if not self.position:
-                size = int(self.equity / price)
-                if size > 0:
-                    self.buy(size=size)
-        elif any_slope_negative:
+                if current_time.hour > 9 or (current_time.hour == 9 and current_time.minute >= 59):
+                    size = int(self.equity / price)
+                    if size > 0:
+                        self.buy(size=size)
+        else:
             if self.position:
                 self.position.close()
