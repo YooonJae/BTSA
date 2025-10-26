@@ -1,0 +1,109 @@
+from backtesting import Strategy
+import numpy as np
+import pandas as pd
+
+
+class TEST_1(Strategy):
+    """
+    Detrended Rolling Percentile Strategy (long-only)
+    with optional MA level gate and a price ceiling.
+
+    Entry:
+      - residual percentile < low_threshold
+      - AND (if use_ma_filter)  price_now < MA(ma_n)
+      - AND price_now <= max_price * (1 - price_buffer_pct)
+
+      If use_volume_sizing is True:
+        - buy size = floor(volume_pct * current_bar_Volume) shares
+
+    Exit:
+      - residual percentile > high_threshold
+      - OR price_now >= max_price   (hard ceiling exit)
+    """
+
+    # --- Core params ---
+    window = 60
+    low_threshold = 0.1
+    high_threshold = 0.9
+
+    # --- MA (level) gate ---
+    ma_n = 390
+    use_ma_filter = True  # require price < MA?
+
+    # --- Price ceiling ---
+    max_price = 2.0
+    price_buffer_pct = 0.005
+    cooldown_bars = 0
+
+    # --- NEW: Volume-based position sizing ---
+    use_volume_sizing = True   # if True, buy only a % of current bar Volume
+    volume_pct = 0.1           # e.g., 10% of bar Volume
+
+    def init(self):
+        price = self.data.Close
+        self.percentile = self.I(self._detrended_percentile, price, self.window)
+        self.ma = self.I(self._rolling_mean, price, self.ma_n)
+        self._cooldown = 0
+
+    @staticmethod
+    def _rolling_mean(x, n):
+        return pd.Series(x).rolling(n, min_periods=n).mean().values
+
+    @staticmethod
+    def _detrended_percentile(price, window):
+        n = len(price)
+        pct = np.full(n, np.nan)
+        t = np.arange(window)
+        for i in range(window - 1, n):
+            y = price[i - window + 1:i + 1]
+            b, a = np.polyfit(t, y, 1)          # slope, intercept
+            resid = y - (a + b * t)
+            now = resid[-1]
+            pct[i] = np.mean(resid <= now)      # percentile of current residual
+        return pct
+
+    def _entry_gate_ok(self, price_now):
+        if not self.use_ma_filter:
+            return True
+        if np.isnan(self.ma[-1]):
+            return False
+        return price_now < self.ma[-1]
+
+    def next(self):
+        p = self.percentile[-1]
+        if np.isnan(p):
+            return
+
+        price_now = self.data.Close[-1]
+
+        # Hard ceiling exit
+        if self.position.is_long and price_now >= self.max_price:
+            self.position.close()
+            if self.cooldown_bars > 0:
+                self._cooldown = self.cooldown_bars
+            return
+
+        # Cooldown countdown
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            return  # block re-entries while cooling down
+
+        # Block entries too close to ceiling
+        if price_now > self.max_price * (1 - self.price_buffer_pct):
+            return
+
+        # Entries & exits
+        if (p < self.low_threshold) and not self.position and self._entry_gate_ok(price_now):
+            if self.use_volume_sizing:
+                # Size = % of current bar's Volume (shares)
+                bar_vol = self.data.Volume[-1]
+                size = int(bar_vol * float(self.volume_pct))
+                if size > 0:
+                    self.buy(size=size)
+                # If size == 0, skip the trade silently
+            else:
+                # Default behavior (library will size to max affordable if size not specified)
+                self.buy()
+
+        elif (p > self.high_threshold) and self.position.is_long:
+            self.position.close()

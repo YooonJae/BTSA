@@ -2,15 +2,15 @@ from backtesting import Strategy
 import numpy as np
 import pandas as pd
 
+
 class TEST_1(Strategy):
     """
     Detrended Rolling Percentile Strategy (long-only)
-    with optional MA level & MA-slope gates.
+    with optional MA level gate.
 
     Entry:
       - residual percentile < low_threshold
-      - AND (if use_ma_filter)  price_now > MA(ma_n)
-      - AND (if use_ma_slope)   slope(MA, slope_lookback) > min_ma_slope
+      - AND (if use_ma_filter)  price_now < MA(ma_n)
 
     Exit:
       - residual percentile > high_threshold
@@ -22,13 +22,8 @@ class TEST_1(Strategy):
     high_threshold = 0.9
 
     # --- MA params ---
-    ma_n = 390 * 1            # e.g., 1 trading day of 1-min bars
-    slope_lookback = 30       # bars for OLS slope of MA
-    min_ma_slope = 0.0        # require > this slope if slope gate enabled
-
-    # --- Gates (switches) ---
-    use_ma_filter = False      # require price > MA?
-    use_ma_slope  = False     # require MA slope > min_ma_slope?
+    ma_n = 390                 # e.g., 1 trading day of 1-min bars
+    use_ma_filter = False      # require price < MA?
 
     def init(self):
         price = self.data.Close
@@ -36,61 +31,37 @@ class TEST_1(Strategy):
         # Detrended rolling percentile
         self.percentile = self.I(self._compute_detrended_percentile, price, self.window)
 
-        # MA and (optionally) its slope — computed once; used only if gates enabled
+        # Optional MA (for gating)
         self.ma = self.I(self._rolling_mean, price, self.ma_n)
-        self.ma_slope = self.I(self._rolling_slope, self.ma, self.slope_lookback)
 
     @staticmethod
     def _rolling_mean(x: np.ndarray, n: int):
+        """Simple rolling mean (same length as input)."""
         return pd.Series(x).rolling(n, min_periods=n).mean().values
 
     @staticmethod
-    def _rolling_slope(arr: np.ndarray, n: int):
-        s = pd.Series(arr)
-        out = np.full(len(s), np.nan)
-        t = np.arange(n)
-        for i in range(n - 1, len(s)):
-            y = s.iloc[i - n + 1:i + 1].values
-            b, a = np.polyfit(t, y, 1)  # slope per bar
-            out[i] = b
-        return out
-
-    @staticmethod
     def _compute_detrended_percentile(price: np.ndarray, window: int):
+        """Compute rolling percentile of detrended residuals."""
         n = len(price)
         pct = np.full(n, np.nan)
         t = np.arange(window)
 
         for i in range(window - 1, n):
             y = price[i - window + 1:i + 1]
-            b, a = np.polyfit(t, y, 1)
+            b, a = np.polyfit(t, y, 1)  # linear detrend
             residuals = y - (a + b * t)
             now_resid = residuals[-1]
             pct[i] = np.mean(residuals <= now_resid)
         return pct
 
     def _entry_gate_ok(self, price_now: float) -> bool:
-        """Evaluate optional MA gates based on switches."""
-        # If no gates enabled, always pass
-        if not self.use_ma_filter and not self.use_ma_slope:
+        """Check MA gate if enabled."""
+        if not self.use_ma_filter:
             return True
-
-        # Need MA if any gate needs it
         if np.isnan(self.ma[-1]):
             return False
-
-        # Level gate
-        if self.use_ma_filter and not (price_now > self.ma[-1]):
-            return False
-
-        # Slope gate
-        if self.use_ma_slope:
-            if np.isnan(self.ma_slope[-1]):
-                return False
-            if not (self.ma_slope[-1] > self.min_ma_slope):
-                return False
-
-        return True
+        # Gate condition: price < MA
+        return price_now < self.ma[-1]
 
     def next(self):
         p = self.percentile[-1]
@@ -99,10 +70,10 @@ class TEST_1(Strategy):
 
         price_now = self.data.Close[-1]
 
-        # Entry
+        # Entry rule
         if (p < self.low_threshold) and not self.position and self._entry_gate_ok(price_now):
             self.buy()
 
-        # Exit
+        # Exit rule
         elif (p > self.high_threshold) and self.position.is_long:
             self.position.close()
