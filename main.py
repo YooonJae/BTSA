@@ -20,6 +20,7 @@ STITCH_UNIVERSE = False   # if True and SYMBOL_KEY is like "l3"/"s2", chain the 
 UNIVERSES: dict[str, list[str]] = {
     "s":  ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"],
     "l":  ["AAPL", "AMD", "GOOG", "MSFT", "NVDA", "PYPL", "TSLA"],
+    "x":  ["X:BTCUSD", "X:ETHUSD", "X:LTCUSD", "X:XRPUSD", "X:BCHUSD"],
 }
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))

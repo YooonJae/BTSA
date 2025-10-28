@@ -86,8 +86,8 @@ def main(ticker: str, start_date_str: str, end_date_str: str, save_folder: str):
 
 if __name__ == "__main__":
     main(
-        ticker="BURU",
+        ticker="X:BTCUSD",
         start_date_str="2024-01-01",
-        end_date_str="2025-10-24",
-        save_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "RawData", "SmallP_LargePV")
+        end_date_str="2025-10-27",
+        save_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "RawData")
     )

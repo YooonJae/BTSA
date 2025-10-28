@@ -198,7 +198,7 @@ def main(
 # ▶️ 실행 예시
 if __name__ == "__main__":
     main(
-        ticker="BURU",
-        input_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "RawData", "SmallP_LargePV"),
-        output_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data", "TransData", "SmallP_LargePV"),
+        ticker="X:BTCUSD",
+        input_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "rawData"),
+        output_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "transData"),
     )
