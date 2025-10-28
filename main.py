@@ -4,27 +4,30 @@ import pandas as pd
 from backtesting import Backtest
 from strategies.stg_TEST_1 import TEST_1
 from dateutil.relativedelta import relativedelta
+from typing import Dict, List, Tuple
+
 
 # === Configuration ===
 STRATEGY    = TEST_1
-SYMBOL_KEY  = "l1"     # examples: "s1", "l3", "mv2", "AAPL" (raw ticker)
+SYMBOL_KEY  = "x1"     # examples: "s1", "l3", "mv2", "AAPL" (raw ticker)
 TIMEFRAME   = 1        # minutes (1, 3, 5, 15, 30, 60, ...)
-START_YEAR  = 2025
+START_YEAR  = 2024
 START_MONTH = 1
-DURATION    = 1
+DURATION    = 12
 
 # NEW: stitch toggle
 STITCH_UNIVERSE = False   # if True and SYMBOL_KEY is like "l3"/"s2", chain the whole "l"/"s" universe
 
 # === Universes (freely expandable) ===
-UNIVERSES: dict[str, list[str]] = {
-    "s":  ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"],
-    "l":  ["AAPL", "AMD", "GOOG", "MSFT", "NVDA", "PYPL", "TSLA"],
-    "x":  ["X:BTCUSD", "X:ETHUSD", "X:LTCUSD", "X:XRPUSD", "X:BCHUSD"],
+UNIVERSES: Dict[str, List[str]] = {
+    "s": ["BBAI", "EOSE", "MARA", "RCAT", "RKLB", "SMR", "TMC"],
+    "l": ["AAPL", "AMD", "GOOG", "MSFT", "NVDA", "PYPL", "TSLA"],
+    "x": ["X:BTCUSD", "X:ETHUSD", "X:LTCUSD", "X:XRPUSD", "X:BCHUSD"],
 }
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "Data", "transData")
+
 
 def _parse_duration(dur):
     if dur is None:
@@ -39,7 +42,7 @@ def _parse_duration(dur):
             "M": relativedelta(months=num),
             "Y": relativedelta(years=num)}.get(unit, relativedelta(months=num))
 
-def resolve_symbol(symbol_key: str) -> tuple[str, str]:
+def resolve_symbol(symbol_key: str) -> Tuple[str, str]:
     key = symbol_key.strip()
     m = re.match(r"^([A-Za-z]+)(\d+)$", key)
     if m:
@@ -169,7 +172,7 @@ bt = Backtest(
     df,
     STRATEGY,
     cash=100_000,
-    commission=lambda price, size: 0.00 * abs(size),  # 0.0035
+    commission= 0 ,  # 0.0035
     exclusive_orders=True,
     trade_on_close=True,
     hedging=False,
